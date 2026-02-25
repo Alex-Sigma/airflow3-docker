@@ -1,0 +1,21 @@
+# Airflow
+logs/
+*.log
+.env
+airflow.db
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Mac
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Docker
+*.pid
