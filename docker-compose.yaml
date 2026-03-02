@@ -65,6 +65,11 @@ x-airflow-common:
     AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
     AIRFLOW__CORE__LOAD_EXAMPLES: 'true'
     AIRFLOW__CORE__EXECUTION_API_SERVER_URL: 'http://airflow-apiserver:8080/execution/'
+    ANALYTICS_PG_HOST: ${ANALYTICS_PG_HOST:-analytics-postgres}
+    ANALYTICS_PG_PORT: ${ANALYTICS_PG_PORT:-5432}
+    ANALYTICS_PG_DB: ${ANALYTICS_PG_DB:-analytics}
+    ANALYTICS_PG_USER: ${ANALYTICS_PG_USER:-analytics}
+    ANALYTICS_PG_PASSWORD: ${ANALYTICS_PG_PASSWORD:-analytics}
     # yamllint disable rule:line-length
     # Use simple http server on scheduler for health checks
     # See https://airflow.apache.org/docs/apache-airflow/stable/administration-and-deployment/logging-monitoring/check-health.html#scheduler-health-check-server
@@ -107,6 +112,38 @@ services:
       retries: 5
       start_period: 5s
     restart: always
+  
+  analytics-postgres:
+    image: postgres:16
+    container_name: analytics-postgres
+    environment:
+      POSTGRES_USER: analytics
+      POSTGRES_PASSWORD: analytics
+      POSTGRES_DB: analytics
+    ports:
+      - "5433:5432"
+    volumes:
+      - analytics_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U analytics -d analytics"]
+      interval: 5s
+      retries: 10
+    restart: unless-stopped
+  
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@example.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    restart: unless-stopped
+    depends_on:
+      analytics-postgres:
+        condition: service_healthy
 
   redis:
     # Redis is limited to 7.2-bookworm due to licencing change
@@ -340,3 +377,5 @@ services:
 
 volumes:
   postgres-db-volume:
+  analytics_postgres_data:
+  pgadmin_data:

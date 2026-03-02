@@ -17,4 +17,6 @@ docker compose up airflow-init
 echo "Starting Airflow..."
 docker compose up -d
 
-echo "Done. Airflow is running at http://localhost:8080"
+echo "Airflow:  http://localhost:8080"
+echo "pgAdmin:  http://localhost:5050"
+echo "Analytics Postgres: localhost:5433 (db=analytics user=analytics)"

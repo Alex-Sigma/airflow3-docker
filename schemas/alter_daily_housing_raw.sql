@@ -1,0 +1,3 @@
+ALTER TABLE daily_housing_raw
+ADD COLUMN IF NOT EXISTS run_date DATE,
+ADD COLUMN IF NOT EXISTS house_id INT;
