@@ -155,3 +155,86 @@ def backfill_missing_days(
         "missing_days_filled": len(missing_dates),
         "missing_dates_preview": [str(x) for x in missing_dates[:10]],
     }
+
+def backfill_features(
+    start_dt: date = date(2025, 1, 1),
+    end_dt: date | None = None,
+) -> dict:
+    """
+    Populate the housing_features table for all dates where
+    features do not exist yet (based on daily_housing_raw).
+    Only missing dates are computed.
+    """
+
+    end_dt = end_dt or date.today()
+    engine = create_engine(_analytics_pg_url(), future=True)
+
+    # 1) Get distinct run_dates from raw
+    with engine.connect() as conn:
+        raw_dates = conn.execute(
+            text("""
+                SELECT DISTINCT run_date
+                FROM public.daily_housing_raw
+                WHERE run_date BETWEEN :s AND :e
+                ORDER BY run_date
+            """),
+            {"s": start_dt, "e": end_dt},
+        ).scalars().all()
+
+    # 2) Get existing feature dates
+    with engine.connect() as conn:
+        feat_dates = conn.execute(
+            text("""
+                SELECT DISTINCT run_date
+                FROM public.housing_features
+                WHERE run_date BETWEEN :s AND :e
+            """),
+            {"s": start_dt, "e": end_dt},
+        ).scalars().all()
+
+    raw_dates_set = set(raw_dates)
+    feat_dates_set = set(feat_dates)
+
+    # Determine missing
+    dates_missing = sorted(list(raw_dates_set - feat_dates_set))
+
+    inserted = 0
+    with engine.begin() as conn:
+        for d in dates_missing:
+            # 3) Compute features for date d from raw
+            conn.execute(
+                text("""
+INSERT INTO public.housing_features
+(run_date, house_id,
+ crim, zn, indus, chas, nox, rm, age, dis, rad, tax, ptratio, b, lstat,
+ rm_sq, crime_tax_ratio, lstat_ptratio_interact, dis_rm_interact, tax_norm,
+ medv)
+SELECT
+    raw.run_date,
+    raw.house_id,
+    raw.crim, raw.zn, raw.indus, raw.chas, raw.nox, raw.rm, raw.age, raw.dis,
+    raw.rad, raw.tax, raw.ptratio, raw.b, raw.lstat,
+
+    raw.rm * raw.rm AS rm_sq,
+    CASE WHEN raw.tax > 0 THEN raw.crim / raw.tax ELSE NULL END AS crime_tax_ratio,
+    raw.lstat * raw.ptratio AS lstat_ptratio_interact,
+    raw.dis * raw.rm AS dis_rm_interact,
+    raw.tax / 1000.0 AS tax_norm,
+
+    raw.medv
+FROM public.daily_housing_raw raw
+WHERE raw.run_date = :dt
+ON CONFLICT (run_date, house_id) DO NOTHING;
+                """),
+                {"dt": d},
+            )
+            inserted += 1
+
+    return {
+        "start_dt": str(start_dt),
+        "end_dt": str(end_dt),
+        "dates_checked": len(raw_dates),
+        "dates_missing": len(dates_missing),
+        "dates_filled": inserted,
+        "preview": [str(x) for x in dates_missing[:10]],
+    }
