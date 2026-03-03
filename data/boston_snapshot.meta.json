@@ -1,0 +1,22 @@
+{
+  "openml_id": 531,
+  "openml_name": "boston",
+  "target": "MEDV",
+  "rows": 506,
+  "cols": [
+    "crim",
+    "zn",
+    "indus",
+    "chas",
+    "nox",
+    "rm",
+    "age",
+    "dis",
+    "rad",
+    "tax",
+    "ptratio",
+    "b",
+    "lstat",
+    "medv"
+  ]
+}
