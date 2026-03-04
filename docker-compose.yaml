@@ -145,6 +145,16 @@ services:
     depends_on:
       analytics-postgres:
         condition: service_healthy
+  
+  dbeaver:
+    image: dbeaver/cloudbeaver:latest
+    container_name: dbeaver
+    ports:
+      - "8978:8978"
+    volumes:
+      - /Users/gast/Desktop/airflow3-docker/data:/opt/airflow/data
+      - cloudbeaver_workspace:/opt/cloudbeaver/workspace
+    restart: unless-stopped
 
   redis:
     # Redis is limited to 7.2-bookworm due to licencing change
@@ -380,3 +390,4 @@ volumes:
   postgres-db-volume:
   analytics_postgres_data:
   pgadmin_data:
+  cloudbeaver_workspace:

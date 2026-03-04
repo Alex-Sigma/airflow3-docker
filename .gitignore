@@ -20,5 +20,12 @@ __pycache__/
 # Docker
 *.pid
 
-# DuchDB
-data/duckdb/
+# DuckDB
+data/duckdb/cloudbeaver-drivers/
+
+# DuckDB database files
+data/
+*.duckdb
+
+# CloudBeaver drivers
+cloudbeaver-drivers/
