@@ -4,3 +4,5 @@ joblib
 sqlalchemy
 psycopg2-binary
 openml
+duckdb
+pyarrow
