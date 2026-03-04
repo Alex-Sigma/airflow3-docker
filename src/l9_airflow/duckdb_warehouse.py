@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS bronze.housing_features (
   tax_norm DOUBLE,
 
   medv DOUBLE,
+  log1p_medv DOUBLE,
 
   PRIMARY KEY (run_date, house_id)
 );
@@ -132,7 +133,7 @@ def sync_features_to_duckdb(start_dt: date = date(2025, 1, 1), end_dt: date | No
               run_date, house_id,
               crim, zn, indus, chas, nox, rm, age, dis, rad, tax, ptratio, b, lstat,
               rm_sq, crime_tax_ratio, lstat_ptratio_interact, dis_rm_interact, tax_norm,
-              medv
+              medv,log1p_medv
             FROM public.housing_features
             WHERE run_date BETWEEN :s AND :e
             ORDER BY run_date, house_id
@@ -151,8 +152,18 @@ def sync_features_to_duckdb(start_dt: date = date(2025, 1, 1), end_dt: date | No
         # Insert into DuckDB (PK prevents duplicates)
         con.register("incoming_features", df)
         con.execute("""
-            INSERT OR IGNORE INTO bronze.housing_features
-            SELECT * FROM incoming_features
+            INSERT OR IGNORE INTO bronze.housing_features (
+              run_date, house_id,
+              crim, zn, indus, chas, nox, rm, age, dis, rad, tax, ptratio, b, lstat,
+              rm_sq, crime_tax_ratio, lstat_ptratio_interact, dis_rm_interact, tax_norm,
+              medv, log1p_medv
+            )
+            SELECT
+              run_date, house_id,
+              crim, zn, indus, chas, nox, rm, age, dis, rad, tax, ptratio, b, lstat,
+              rm_sq, crime_tax_ratio, lstat_ptratio_interact, dis_rm_interact, tax_norm,
+              medv, log1p_medv
+            FROM incoming_features
         """)
 
         duck_cnt = con.execute("""
