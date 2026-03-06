@@ -9,9 +9,6 @@ from sqlalchemy import create_engine, text
 import openml
 
 
-
-
-
 INSERT_SQL = """
 INSERT INTO public.daily_housing_raw
 (crim, zn, indus, chas, nox, rm, age, dis, rad, tax, ptratio, b, lstat, medv, run_date, house_id)
@@ -29,23 +26,17 @@ def _analytics_pg_url() -> str:
     pwd = os.environ.get("ANALYTICS_PG_PASSWORD", "analytics")
     return f"postgresql+psycopg2://{user}:{pwd}@{host}:{port}/{db}"
 
+
 SNAPSHOT_PATH = Path("/opt/airflow/data/boston_snapshot.parquet")
 META_PATH = Path("/opt/airflow/data/boston_snapshot.meta.json")
 
-# Optional: pick a stable dataset id instead of name
-OPENML_DATASET_ID = int(os.environ.get("OPENML_BOSTON_ID", "0"))  # set later
+OPENML_DATASET_ID = int(os.environ.get("OPENML_BOSTON_ID", "0"))
+
 
 def ensure_boston_snapshot(force_refresh: bool = False) -> pd.DataFrame:
-    """
-    Ensures we have a stable local snapshot of the Boston-like dataset.
-    - If snapshot exists: load it
-    - Else: download from OpenML once, save snapshot, then load it
-    """
     if SNAPSHOT_PATH.exists() and not force_refresh:
-        df = pd.read_parquet(SNAPSHOT_PATH)
-        return df
+        return pd.read_parquet(SNAPSHOT_PATH)
 
-    # Download once
     if OPENML_DATASET_ID > 0:
         ds = openml.datasets.get_dataset(OPENML_DATASET_ID)
     else:
@@ -54,15 +45,11 @@ def ensure_boston_snapshot(force_refresh: bool = False) -> pd.DataFrame:
     X, y, _, _ = ds.get_data(dataset_format="dataframe", target=ds.default_target_attribute)
     df = X.copy()
     df["medv"] = y
-
-    # Normalize columns now, so snapshot is already “clean”
     df.columns = [c.strip().lower() for c in df.columns]
 
-    # Persist snapshot
     SNAPSHOT_PATH.parent.mkdir(parents=True, exist_ok=True)
     df.to_parquet(SNAPSHOT_PATH, index=False)
 
-    # Optional metadata
     meta = {
         "openml_id": getattr(ds, "dataset_id", None),
         "openml_name": getattr(ds, "name", None),
@@ -85,20 +72,17 @@ def insert_daily_sample(sample_size: int = 100, run_dt: date | None = None, seed
     df = load_boston_like_from_openml()
     df.columns = [c.strip().lower() for c in df.columns]
 
-    expected = ["crim","zn","indus","chas","nox","rm","age","dis","rad","tax","ptratio","b","lstat","medv"]
+    expected = ["crim", "zn", "indus", "chas", "nox", "rm", "age", "dis", "rad", "tax", "ptratio", "b", "lstat", "medv"]
     missing = [c for c in expected if c not in df.columns]
     if missing:
         raise ValueError(f"Unexpected columns from OpenML. Missing={missing}. Got={df.columns.tolist()}")
 
     df = df.reset_index(drop=True)
     df["house_id"] = df.index.astype(int)
-    df["run_date"] = run_dt  # date type is fine
+    df["run_date"] = run_dt
 
-    # deterministic per-day sampling (stable reruns)
     day_seed = seed + int(run_dt.strftime("%Y%m%d"))
     daily = df.sample(n=min(sample_size, len(df)), random_state=day_seed).copy()
-
-    # IMPORTANT: keep only the columns that match INSERT_SQL
     daily = daily[expected + ["run_date", "house_id"]]
 
     engine = create_engine(_analytics_pg_url(), future=True)
@@ -114,6 +98,7 @@ def insert_daily_sample(sample_size: int = 100, run_dt: date | None = None, seed
 
     return {"run_date": str(run_dt), "rows_present_for_day": int(cnt)}
 
+
 def backfill_missing_days(
     start_dt: date = date(2025, 1, 1),
     end_dt: date | None = None,
@@ -123,7 +108,6 @@ def backfill_missing_days(
     end_dt = end_dt or date.today()
     engine = create_engine(_analytics_pg_url(), future=True)
 
-    # 1) Dates that already exist in DB
     with engine.connect() as conn:
         rows = conn.execute(
             text("""
@@ -135,9 +119,8 @@ def backfill_missing_days(
             {"start": start_dt, "end": end_dt},
         ).all()
 
-    existing = {r[0] for r in rows}  # set[date]
+    existing = {r[0] for r in rows}
 
-    # 2) Compute all expected dates
     missing_dates: list[date] = []
     current = start_dt
     while current <= end_dt:
@@ -145,7 +128,6 @@ def backfill_missing_days(
             missing_dates.append(current)
         current += timedelta(days=1)
 
-    # 3) Insert only missing dates
     for d in missing_dates:
         insert_daily_sample(sample_size=sample_size, run_dt=d, seed=seed)
 
@@ -156,20 +138,18 @@ def backfill_missing_days(
         "missing_dates_preview": [str(x) for x in missing_dates[:10]],
     }
 
+
 def backfill_features(
     start_dt: date = date(2025, 1, 1),
     end_dt: date | None = None,
 ) -> dict:
     """
-    Populate the housing_features table for all dates where
-    features do not exist yet (based on daily_housing_raw).
-    Only missing dates are computed.
+    Populate public.housing_features for dates missing in features but present in raw.
     """
 
     end_dt = end_dt or date.today()
     engine = create_engine(_analytics_pg_url(), future=True)
 
-    # 1) Get distinct run_dates from raw
     with engine.connect() as conn:
         raw_dates = conn.execute(
             text("""
@@ -181,7 +161,6 @@ def backfill_features(
             {"s": start_dt, "e": end_dt},
         ).scalars().all()
 
-    # 2) Get existing feature dates
     with engine.connect() as conn:
         feat_dates = conn.execute(
             text("""
@@ -194,21 +173,20 @@ def backfill_features(
 
     raw_dates_set = set(raw_dates)
     feat_dates_set = set(feat_dates)
-
-    # Determine missing
     dates_missing = sorted(list(raw_dates_set - feat_dates_set))
 
     inserted = 0
     with engine.begin() as conn:
         for d in dates_missing:
-            # 3) Compute features for date d from raw
             conn.execute(
                 text("""
 INSERT INTO public.housing_features
-(run_date, house_id,
- crim, zn, indus, chas, nox, rm, age, dis, rad, tax, ptratio, b, lstat,
- rm_sq, crime_tax_ratio, lstat_ptratio_interact, dis_rm_interact, tax_norm,
- medv)
+(
+    run_date, house_id,
+    crim, zn, indus, chas, nox, rm, age, dis, rad, tax, ptratio, b, lstat,
+    rm_sq, crime_tax_ratio, lstat_ptratio_interact, dis_rm_interact, tax_norm,
+    medv, log1p_medv
+)
 SELECT
     raw.run_date,
     raw.house_id,
@@ -221,10 +199,32 @@ SELECT
     raw.dis * raw.rm AS dis_rm_interact,
     raw.tax / 1000.0 AS tax_norm,
 
-    raw.medv
+    raw.medv,
+    LN(1 + raw.medv) AS log1p_medv
 FROM public.daily_housing_raw raw
 WHERE raw.run_date = :dt
-ON CONFLICT (run_date, house_id) DO NOTHING;
+ON CONFLICT (run_date, house_id) DO UPDATE
+SET
+    crim = EXCLUDED.crim,
+    zn = EXCLUDED.zn,
+    indus = EXCLUDED.indus,
+    chas = EXCLUDED.chas,
+    nox = EXCLUDED.nox,
+    rm = EXCLUDED.rm,
+    age = EXCLUDED.age,
+    dis = EXCLUDED.dis,
+    rad = EXCLUDED.rad,
+    tax = EXCLUDED.tax,
+    ptratio = EXCLUDED.ptratio,
+    b = EXCLUDED.b,
+    lstat = EXCLUDED.lstat,
+    rm_sq = EXCLUDED.rm_sq,
+    crime_tax_ratio = EXCLUDED.crime_tax_ratio,
+    lstat_ptratio_interact = EXCLUDED.lstat_ptratio_interact,
+    dis_rm_interact = EXCLUDED.dis_rm_interact,
+    tax_norm = EXCLUDED.tax_norm,
+    medv = EXCLUDED.medv,
+    log1p_medv = EXCLUDED.log1p_medv
                 """),
                 {"dt": d},
             )

@@ -11,8 +11,8 @@ from l9_airflow.duckdb_warehouse import sync_features_to_duckdb, duckdb_init
     dag_id="housing_daily_ingest",
     description="Backfill daily housing raw data, materialize features in Postgres, then sync to DuckDB",
     start_date=datetime(2025, 1, 1),
-    schedule=None,  # later: "0 6 * * *"
-    catchup=False,
+    schedule= "0 0 * * *",  
+    catchup=True,
     tags=["housing", "ingestion", "postgres", "features", "duckdb"],
 )
 def housing_daily_ingest():
