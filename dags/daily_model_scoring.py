@@ -35,6 +35,16 @@ def run_export():
     print(res_parquet)
 
 
+def map_scoring_run_to_ingest_run(logical_date, **kwargs):
+    """
+    scoring logical_date: 2026-03-07 00:15
+    ingest logical_date:  2026-03-07 00:00
+
+    So we explicitly map scoring run to same-day midnight ingest run.
+    """
+    return logical_date.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
 with DAG(
     dag_id="daily_housing_model_scoring",
     start_date=datetime(2026, 3, 5),
@@ -48,13 +58,14 @@ with DAG(
     },
     tags=["ml", "scoring", "export"],
 ) as dag:
-    
+
     wait_for_housing_ingest = ExternalTaskSensor(
         task_id="wait_for_housing_ingest",
         external_dag_id="housing_daily_ingest",
-        external_task_id=None,   # wait for the whole DAG run
+        external_task_id=None,   # wait for whole DAG run
         allowed_states=["success"],
         failed_states=["failed"],
+        execution_date_fn=map_scoring_run_to_ingest_run,
         mode="reschedule",
         poke_interval=30,
         timeout=60 * 60,
