@@ -385,6 +385,15 @@ services:
       <<: *airflow-common-depends-on
       airflow-init:
         condition: service_completed_successfully
+  r-runtime:
+    build:
+      context: .
+      dockerfile: docker/r-runtime/Dockerfile
+    container_name: r-runtime
+    volumes:
+      - .:/project
+    working_dir: /project
+    restart: unless-stopped
 
 volumes:
   postgres-db-volume:
