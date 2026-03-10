@@ -12,6 +12,9 @@ import numpy as np
 import pandas as pd
 from sqlalchemy import create_engine, text
 
+# NEW: scoring should use the explicitly promoted champion
+from l9_airflow.model_lifecycle import get_active_champion
+
 
 DUCKDB_PATH_DEFAULT = "/opt/airflow/data/duckdb/warehouse.duckdb"
 
@@ -66,46 +69,49 @@ class ScorePublishResult:
     postgres_upserted: int
 
 
-def _get_latest_champion(con: duckdb.DuckDBPyConnection) -> Tuple[str, str, str, str]:
-    """
-    Stage 1 rule (simple and deterministic):
-      - Champion = latest run for target_col='log1p_medv'
-      - If none exists, fallback to latest run for target_col='medv'
-    Returns: (run_id, model_name, target_col, model_path)
-    """
-    row = con.execute(
-        """
-        SELECT run_id, model_name, target_col, model_path
-        FROM ml.model_registry
-        WHERE target_col='log1p_medv'
-        ORDER BY created_at DESC
-        LIMIT 1
-        """
-    ).fetchone()
-
-    if row is None:
-        row = con.execute(
-            """
-            SELECT run_id, model_name, target_col, model_path
-            FROM ml.model_registry
-            WHERE target_col='medv'
-            ORDER BY created_at DESC
-            LIMIT 1
-            """
-        ).fetchone()
-
-    if row is None:
-        raise RuntimeError("No champion found in ml.model_registry (expected at least one trained model).")
-
-    run_id, model_name, target_col, model_path = row
-    return str(run_id), str(model_name), str(target_col), str(model_path)
+# -------------------------------------------------------------------
+# OLD LOGIC (COMMENTED OUT)
+# -------------------------------------------------------------------
+# def _get_latest_champion(con: duckdb.DuckDBPyConnection) -> Tuple[str, str, str, str]:
+#     """
+#     Stage 1 rule (simple and deterministic):
+#       - Champion = latest run for target_col='log1p_medv'
+#       - If none exists, fallback to latest run for target_col='medv'
+#     Returns: (run_id, model_name, target_col, model_path)
+#     """
+#     row = con.execute(
+#         """
+#         SELECT run_id, model_name, target_col, model_path
+#         FROM ml.model_registry
+#         WHERE target_col='log1p_medv'
+#         ORDER BY created_at DESC
+#         LIMIT 1
+#         """
+#     ).fetchone()
+#
+#     if row is None:
+#         row = con.execute(
+#             """
+#             SELECT run_id, model_name, target_col, model_path
+#             FROM ml.model_registry
+#             WHERE target_col='medv'
+#             ORDER BY created_at DESC
+#             LIMIT 1
+#             """
+#         ).fetchone()
+#
+#     if row is None:
+#         raise RuntimeError("No champion found in ml.model_registry (expected at least one trained model).")
+#
+#     run_id, model_name, target_col, model_path = row
+#     return str(run_id), str(model_name), str(target_col), str(model_path)
+# -------------------------------------------------------------------
 
 
 def _load_artifact(model_path: str):
     with open(model_path, "rb") as f:
         obj = pickle.load(f)
 
-    # Your artifact structure is: {"pipeline": pipe, "feature_cols": [...], ...}
     if "pipeline" not in obj or "feature_cols" not in obj:
         raise ValueError(f"Unexpected model artifact format in {model_path}. Keys={list(obj.keys())}")
     return obj
@@ -113,8 +119,7 @@ def _load_artifact(model_path: str):
 
 def _ensure_scoring_view(con: duckdb.DuckDBPyConnection) -> None:
     """
-    A stable scoring view = “silver rows usable for inference”.
-    We keep it as a VIEW so it auto-includes new days.
+    A stable scoring view = rows usable for inference.
     """
     con.execute("""
     CREATE SCHEMA IF NOT EXISTS silver;
@@ -131,13 +136,17 @@ def score_and_publish_daily(
     duckdb_path: Optional[str] = None,
 ) -> ScorePublishResult:
     """
-    End-to-end Stage 1:
-      DuckDB (silver score rows) -> model predict -> DuckDB gold upsert -> Postgres upsert
+    End-to-end production scoring:
 
-    - Uses latest champion from DuckDB ml.model_registry
-    - If champion target is log1p_medv, writes BOTH:
-        y_pred_log1p and predicted_medv=expm1(pred)
-      If champion target is medv, writes predicted_medv and y_pred_log1p=NULL
+      DuckDB (silver score rows)
+        -> load ACTIVE champion from ml.model_champion
+        -> predict
+        -> write DuckDB gold
+        -> publish Postgres
+
+    Important:
+    This no longer uses "latest trained model".
+    It uses the explicitly promoted active champion.
     """
     duckdb_path = duckdb_path or _duckdb_path()
     created_at = _utc_now_ts()
@@ -147,12 +156,29 @@ def score_and_publish_daily(
         con.execute(GOLD_DDL)
         _ensure_scoring_view(con)
 
-        champion_run_id, model_name, target_col, model_path = _get_latest_champion(con)
+        # ------------------------------------------------------------
+        # NEW CHAMPION LOGIC
+        # ------------------------------------------------------------
+        # OLD:
+        # champion_run_id, model_name, target_col, model_path = _get_latest_champion(con)
+        #
+        # NEW:
+        # Read the currently active champion from the lifecycle table.
+        # This makes scoring governance-aware and prevents accidental
+        # auto-promotion of the latest trained model.
+        # ------------------------------------------------------------
+        champion = get_active_champion(duckdb_path)
+
+        champion_run_id = champion.run_id
+        model_name = champion.model_name
+        target_col = champion.target_col
+        model_path = champion.model_path
+        # ------------------------------------------------------------
+
         artifact = _load_artifact(model_path)
         pipe = artifact["pipeline"]
         feature_cols = artifact["feature_cols"]
 
-        # Pull scoring data
         df = con.execute(
             f"""
             SELECT run_date, house_id, {", ".join(feature_cols)}
@@ -202,7 +228,6 @@ def score_and_publish_daily(
             }
         )
 
-        # --- Upsert into DuckDB gold (overwrite same day/house with current champion)
         con.register("preds", out)
         con.execute(
             """
@@ -224,11 +249,9 @@ def score_and_publish_daily(
     finally:
         con.close()
 
-    # --- Publish to Postgres (for concurrency/BI)
     pg = create_engine(_analytics_pg_url(), future=True)
 
     with pg.begin() as c:
-        # Upsert using VALUES list via executemany
         rows = out.to_dict(orient="records")
         c.execute(
             text(

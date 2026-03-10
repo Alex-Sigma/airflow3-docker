@@ -4,9 +4,9 @@ set -e
 echo "========================================"
 echo "1) AIRFLOW DAG RUNS"
 echo "========================================"
-docker compose exec airflow-scheduler airflow dags list-runs -d housing_daily_ingest | head -n 10 || true
+docker compose exec airflow-scheduler airflow dags list-runs housing_daily_ingest | head -n 10 || true
 echo
-docker compose exec airflow-scheduler airflow dags list-runs -d daily_housing_model_scoring | head -n 10 || true
+docker compose exec airflow-scheduler airflow dags list-runs daily_housing_model_scoring | head -n 10 || trueompose exec airflow-scheduler airflow dags list-runs -d daily_housing_model_scoring | head -n 10 || true
 
 echo
 echo "========================================"
