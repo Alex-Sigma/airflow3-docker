@@ -25,7 +25,9 @@ RUN R -e "install.packages(c( \
     'tidyr', \
     'glmnet', \
     'duckdb', \
-    ,'tidymodels' \
+    'jsonlite', \
+    ,'tidymodels', \
+    ,'dbplyr'\
     ), repos='https://cloud.r-project.org')"
 
 CMD ["tail", "-f", "/dev/null"]
