@@ -29,4 +29,12 @@ data/
 
 # CloudBeaver drivers
 cloudbeaver-drivers/
+
+# Model artifacts .py
 models/*.pkl
+
+# R data artifacts 
+R/outputs/
+
+# R model artifacts
+R/models/
